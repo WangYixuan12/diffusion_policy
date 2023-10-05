@@ -311,7 +311,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             trajectory = cond_data.detach()
 
         # generate impainting mask
-        condition_mask = self.mask_generator(trajectory.shape)
+        condition_mask = self.mask_generator(trajectory.shape) # NOTE: what is mask_generator - seems like something abandoned
 
         # Sample noise that we'll add to the images
         noise = torch.randn(trajectory.shape, device=trajectory.device)

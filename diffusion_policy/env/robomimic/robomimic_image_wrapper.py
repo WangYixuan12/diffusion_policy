@@ -1,10 +1,12 @@
 from typing import List, Optional
+import collections
 from matplotlib.pyplot import fill
 import numpy as np
 import gym
 from gym import spaces
 from omegaconf import OmegaConf
 from robomimic.envs.env_robosuite import EnvRobosuite
+import robomimic.utils.obs_utils as ObsUtils
 
 class RobomimicImageWrapper(gym.Env):
     def __init__(self, 
@@ -121,7 +123,7 @@ class RobomimicImageWrapper(gym.Env):
 def test():
     import os
     from omegaconf import OmegaConf
-    cfg_path = os.path.expanduser('~/dev/diffusion_policy/diffusion_policy/config/task/lift_image.yaml')
+    cfg_path = os.path.expanduser('diffusion_policy/config/task/can_image_abs.yaml')
     cfg = OmegaConf.load(cfg_path)
     shape_meta = cfg['shape_meta']
 
@@ -130,7 +132,12 @@ def test():
     import robomimic.utils.env_utils as EnvUtils
     from matplotlib import pyplot as plt
 
-    dataset_path = os.path.expanduser('~/dev/diffusion_policy/data/robomimic/datasets/square/ph/image.hdf5')
+    modality_mapping = collections.defaultdict(list)
+    for key, attr in shape_meta['obs'].items():
+        modality_mapping[attr.get('type', 'low_dim')].append(key)
+    ObsUtils.initialize_obs_modality_mapping_from_dict(modality_mapping)
+
+    dataset_path = os.path.expanduser('/media/yixuan_2T/diffusion_policy/data/robomimic/datasets/can/mh/image_abs.hdf5')
     env_meta = FileUtils.get_env_metadata_from_dataset(
         dataset_path)
 
@@ -141,6 +148,7 @@ def test():
         use_image_obs=True, 
     )
 
+    env.env.hard_reset = False
     wrapper = RobomimicImageWrapper(
         env=env,
         shape_meta=shape_meta
@@ -149,6 +157,7 @@ def test():
     obs = wrapper.reset()
     img = wrapper.render()
     plt.imshow(img)
+    plt.show()
 
 
     # states = list()
@@ -162,3 +171,6 @@ def test():
     # plt.imshow(img)
     # wrapper.seed()
     # states.append(wrapper.env.get_state()['states'])
+
+if __name__ == '__main__':
+    test()
