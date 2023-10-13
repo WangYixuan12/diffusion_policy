@@ -57,7 +57,7 @@ dependencies:
     - pygame==2.1.2
     - pybullet-svl==3.1.6.4
     - git+git@github.com:WangYixuan12/robosuite.git
-    - git+git@github.com:WangYixuan12/robomimic.git
+    - git+git@github.com:WangYixuan12/robomimic.git@gdp
     - pytorchvideo==0.1.5
     # pip package required for jpeg-xl
     - imagecodecs==2022.9.26
