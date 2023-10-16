@@ -12,16 +12,36 @@ import concurrent.futures
 import h5py
 import cv2
 from filelock import FileLock
+from threadpoolctl import threadpool_limits
+
+import sys
+sys.path.append('/home/yixuan/diffusion_policy')
+
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.model.common.rotation_transformer import RotationTransformer
 from diffusion_policy.common.sampler import (
     SequenceSampler, get_val_mask, downsample_mask)
-from diffusion_policy.model.common.normalizer import LinearNormalizer
+from diffusion_policy.model.common.normalizer import LinearNormalizer, SingleFieldLinearNormalizer
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
-from diffusion_policy.common.normalize_util import get_image_range_normalizer
 from diffusion_policy.codecs.imagecodecs_numcodecs import register_codecs, Jpeg2k
+from diffusion_policy.common.normalize_util import (
+    get_range_normalizer_from_stat,
+    get_image_range_normalizer,
+    get_identity_normalizer_from_stat,
+    array_to_stats,
+)
 register_codecs()
+
+def normalizer_from_stat(stat):
+    max_abs = np.maximum(stat['max'].max(), np.abs(stat['min']).max())
+    scale = np.full_like(stat['max'], fill_value=1/max_abs)
+    offset = np.zeros_like(stat['max'])
+    return SingleFieldLinearNormalizer.create_manual(
+        scale=scale,
+        offset=offset,
+        input_stats_dict=stat
+    )
 
 def _convert_actions(raw_actions, rotation_transformer):
     is_dual_arm = False
@@ -180,7 +200,8 @@ class SapienDataset(BaseImageDataset):
             pad_before=0,
             pad_after=0,
             rotation_rep='rotation_6d',
-            use_cache=False,
+            use_legacy_normalizer=True,
+            use_cache=True,
             seed=42,
             val_ratio=0.0,
             ):
@@ -226,11 +247,23 @@ class SapienDataset(BaseImageDataset):
                 shape_meta=shape_meta, 
                 dataset_dir=dataset_dir,
                 rotation_transformer=rotation_transformer)
+        self.replay_buffer = replay_buffer
         
-        self.dataset_dir = dataset_dir
-        self.n_episodes = len(glob.glob(os.path.join(dataset_dir, 'episode_*.h5py')))
+        rgb_keys = list()
+        lowdim_keys = list()
+        obs_shape_meta = shape_meta['obs']
+        for key, attr in obs_shape_meta.items():
+            type = attr.get('type', 'low_dim')
+            if type == 'rgb':
+                rgb_keys.append(key)
+            elif type == 'low_dim':
+                lowdim_keys.append(key)
+        
+        # for key in rgb_keys:
+        #     replay_buffer[key].compressor.numthreads=1
+
         val_mask = get_val_mask(
-            n_episodes=self.n_episodes,
+            n_episodes=replay_buffer.n_episodes, 
             val_ratio=val_ratio,
             seed=seed)
         train_mask = ~val_mask
@@ -242,10 +275,16 @@ class SapienDataset(BaseImageDataset):
             pad_before=pad_before, 
             pad_after=pad_after,
             episode_mask=train_mask)
+        
+        self.shape_meta = shape_meta
+        self.rgb_keys = rgb_keys
+        self.lowdim_keys = lowdim_keys
         self.train_mask = train_mask
         self.horizon = horizon
         self.pad_before = pad_before
         self.pad_after = pad_after
+        self.n_obs_steps = None
+        self.use_legacy_normalizer = use_legacy_normalizer
 
     def get_validation_dataset(self):
         val_set = copy.copy(self)
@@ -259,46 +298,97 @@ class SapienDataset(BaseImageDataset):
         val_set.train_mask = ~self.train_mask
         return val_set
 
-    def get_normalizer(self, mode='limits', **kwargs):
-        data = {
-            'action': self.replay_buffer['action'],
-            'agent_pos': self.replay_buffer['state'][...,:2]
-        }
+    def get_normalizer(self, **kwargs) -> LinearNormalizer:
         normalizer = LinearNormalizer()
-        normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
-        normalizer['image'] = get_image_range_normalizer()
+
+        # action
+        stat = array_to_stats(self.replay_buffer['action'])
+        if self.use_legacy_normalizer:
+            this_normalizer = normalizer_from_stat(stat)
+        else:
+            raise RuntimeError('unsupported')
+        normalizer['action'] = this_normalizer
+
+        # obs
+        for key in self.lowdim_keys:
+            stat = array_to_stats(self.replay_buffer[key])
+
+            if key.endswith('pos'):
+                this_normalizer = get_range_normalizer_from_stat(stat)
+            elif key.endswith('quat'):
+                # quaternion is in [-1,1] already
+                this_normalizer = get_identity_normalizer_from_stat(stat)
+            elif key.endswith('qpos'):
+                this_normalizer = get_range_normalizer_from_stat(stat)
+            else:
+                raise RuntimeError('unsupported')
+            normalizer[key] = this_normalizer
+
+        # image
+        for key in self.rgb_keys:
+            normalizer[key] = get_image_range_normalizer()
         return normalizer
 
     def __len__(self) -> int:
         return len(self.sampler)
 
     def _sample_to_data(self, sample):
-        agent_pos = sample['state'][:,:2].astype(np.float32) # (agent_posx2, block_posex3)
-        image = np.moveaxis(sample['img'],-1,1)/255
+        # to save RAM, only return first n_obs_steps of OBS
+        # since the rest will be discarded anyway.
+        # when self.n_obs_steps is None
+        # this slice does nothing (takes all)
+        T_slice = slice(self.n_obs_steps)
+
+        obs_dict = dict()
+        for key in self.rgb_keys:
+            # move channel last to channel first
+            # T,H,W,C
+            # convert uint8 image to float32
+            obs_dict[key] = np.moveaxis(sample[key][T_slice],-1,1
+                ).astype(np.float32) / 255.
+            # T,C,H,W
+            del sample[key]
+        for key in self.lowdim_keys:
+            obs_dict[key] = sample[key][T_slice].astype(np.float32)
+            del sample[key]
 
         data = {
-            'obs': {
-                'image': image, # T, 3, 96, 96
-                'agent_pos': agent_pos, # T, 2
-            },
-            'action': sample['action'].astype(np.float32) # T, 2
+            'obs': dict_apply(obs_dict, torch.from_numpy),
+            'action': torch.from_numpy(sample['action'].astype(np.float32))
         }
         return data
     
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         sample = self.sampler.sample_sequence(idx)
         data = self._sample_to_data(sample)
-        torch_data = dict_apply(data, torch.from_numpy)
-        return torch_data
+        return data
 
 
 def test():
     import os
-    zarr_path = os.path.expanduser('~/dev/diffusion_policy/data/pusht/pusht_cchi_v7_replay.zarr')
-    dataset = PushTImageDataset(zarr_path, horizon=16)
+    zarr_path = os.path.expanduser('/media/yixuan_2T/diffusion_policy/data/sapien_env/pick_place_soda')
+    shape_meta = {
+        'obs': {
+            'front_view_color': {
+                'shape': (3, 60, 80),
+                'type': 'rgb',
+            },
+            'right_view_color': {
+                'shape': (3, 60, 80),
+                'type': 'rgb',
+            },
+        }
+    }
+    dataset = SapienDataset(shape_meta, zarr_path, horizon=16)
+    print(dataset[0])
+    print(len(dataset))
 
     # from matplotlib import pyplot as plt
     # normalizer = dataset.get_normalizer()
     # nactions = normalizer['action'].normalize(dataset.replay_buffer['action'])
     # diff = np.diff(nactions, axis=0)
     # dists = np.linalg.norm(np.diff(nactions, axis=0), axis=-1)
+
+if __name__ == '__main__':
+    test()
