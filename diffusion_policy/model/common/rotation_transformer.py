@@ -51,7 +51,7 @@ class RotationTransformer:
                 getattr(pt, f'{to_rep}_to_matrix')
             ]
             if to_convention is not None:
-                funcs = [functools.partial(func, convernsion=to_convention) 
+                funcs = [functools.partial(func, convention=to_convention) 
                     for func in funcs]
             forward_funcs.append(funcs[0])
             inverse_funcs.append(funcs[1])
