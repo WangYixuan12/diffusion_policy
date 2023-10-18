@@ -12,6 +12,9 @@ import wandb.sdk.data_types.video as wv
 import hydra
 from omegaconf import OmegaConf
 
+import sys
+sys.path.append('/home/yixuan/diffusion_policy')
+
 from sapien_env.rl_env.mug_collect_env import BaseRLEnv
 from sapien_env.sim_env.constructor import add_default_scene_light
 from diffusion_policy.gym_util.async_vector_env import AsyncVectorEnv
@@ -20,25 +23,11 @@ from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
 from diffusion_policy.gym_util.video_recording_wrapper import VideoRecordingWrapper, VideoRecorder
 from diffusion_policy.model.common.rotation_transformer import RotationTransformer
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
+from diffusion_policy.policy.diffusion_unet_hybrid_image_policy import DiffusionUnetHybridImagePolicy
 from diffusion_policy.common.pytorch_util import dict_apply
+from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.env.sapien_env.sapien_env_wrapper import SapienEnvWrapper
-
-
-def create_env(env_meta, shape_meta, enable_render=True):
-    modality_mapping = collections.defaultdict(list)
-    for key, attr in shape_meta['obs'].items():
-        modality_mapping[attr.get('type', 'low_dim')].append(key)
-    ObsUtils.initialize_obs_modality_mapping_from_dict(modality_mapping)
-
-    env = EnvUtils.create_env_from_metadata(
-        env_meta=env_meta,
-        render=False, 
-        render_offscreen=enable_render,
-        use_image_obs=enable_render, 
-    )
-    return env
-
 
 class SapienImageRunner(BaseImageRunner):
 
@@ -55,7 +44,7 @@ class SapienImageRunner(BaseImageRunner):
             max_steps=400,
             n_obs_steps=2,
             n_action_steps=8,
-            render_obs_key='agentview_image',
+            render_obs_keys=['right_bottom_view'],
             fps=10,
             crf=22,
             past_action=False,
@@ -67,25 +56,23 @@ class SapienImageRunner(BaseImageRunner):
 
         if n_envs is None:
             n_envs = n_train + n_test
+        steps_per_render = 1
 
-        env_cfg_path = os.path.join(os.path.dirname(dataset_dir), 'config.yaml')
+        env_cfg_path = os.path.join(dataset_dir, 'config.yaml')
         env_cfg = OmegaConf.load(env_cfg_path)
 
         rotation_transformer = RotationTransformer('euler_angles', 'rotation_6d', from_convention='XYZ')
 
-        # TODO:
-        # - refer to test in SapienEnvWrapper to create env properly
-        # - make sure seed are set correctly so that init is the same
-
         def env_fn():
             env : BaseRLEnv = hydra.utils.instantiate(env_cfg)
+            add_default_scene_light(env.scene, env.renderer)
             return MultiStepWrapper(
                 VideoRecordingWrapper(
                     SapienEnvWrapper(
-                        env=robomimic_env,
+                        env=env,
                         shape_meta=shape_meta,
                         init_state=None,
-                        render_obs_key=render_obs_key
+                        render_obs_keys=render_obs_keys
                     ),
                     video_recoder=VideoRecorder.create_h264(
                         fps=fps,
@@ -109,11 +96,12 @@ class SapienImageRunner(BaseImageRunner):
         env_init_fn_dills = list()
 
         # train
-        with h5py.File(dataset_path, 'r') as f:
-            for i in range(n_train):
-                train_idx = train_start_idx + i
-                enable_render = i < n_train_vis
-                init_state = f[f'data/demo_{train_idx}/states'][0]
+        for i in range(n_train):
+            seed = train_start_idx + i
+            enable_render = i < n_train_vis
+            dataset_path = os.path.join(dataset_dir, f'episode_{i}.hdf5')
+            with h5py.File(dataset_path, 'r') as f:
+                init_state = f['info']['init_pose'][()]
 
                 def init_fn(env, init_state=init_state, 
                     enable_render=enable_render):
@@ -130,10 +118,12 @@ class SapienImageRunner(BaseImageRunner):
                         env.env.file_path = filename
 
                     # switch to init_state reset
-                    assert isinstance(env.env.env, RobomimicImageWrapper)
+                    assert isinstance(env.env.env, SapienEnvWrapper)
                     env.env.env.init_state = init_state
+                    env.seed(seed)
+                    env.env.env.reset()
 
-                env_seeds.append(train_idx)
+                env_seeds.append(seed)
                 env_prefixs.append('train/')
                 env_init_fn_dills.append(dill.dumps(init_fn))
         
@@ -157,19 +147,19 @@ class SapienImageRunner(BaseImageRunner):
                     env.env.file_path = filename
 
                 # switch to seed reset
-                assert isinstance(env.env.env, RobomimicImageWrapper)
+                assert isinstance(env.env.env, SapienEnvWrapper)
                 env.env.env.init_state = None
                 env.seed(seed)
+                env.env.env.reset()
 
             env_seeds.append(seed)
             env_prefixs.append('test/')
             env_init_fn_dills.append(dill.dumps(init_fn))
 
-        env = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
-        # env = SyncVectorEnv(env_fns)
+        # env = AsyncVectorEnv(env_fns)
+        env = SyncVectorEnv(env_fns)
 
 
-        self.env_meta = env_meta
         self.env = env
         self.env_fns = env_fns
         self.env_seeds = env_seeds
@@ -221,8 +211,7 @@ class SapienImageRunner(BaseImageRunner):
             past_action = None
             policy.reset()
 
-            env_name = self.env_meta['env_name']
-            pbar = tqdm.tqdm(total=self.max_steps, desc=f"Eval {env_name}Image {chunk_idx+1}/{n_chunks}", 
+            pbar = tqdm.tqdm(total=self.max_steps, desc=f"Eval {chunk_idx+1}/{n_chunks}", 
                 leave=False, mininterval=self.tqdm_interval_sec)
             
             done = False
@@ -323,3 +312,26 @@ class SapienImageRunner(BaseImageRunner):
             uaction = uaction.reshape(*raw_shape[:-1], 14)
 
         return uaction
+
+def test():
+    cfg_path = '/home/yixuan/diffusion_policy/config/sapien_pick_place_can_cnn.yaml'
+    cfg = OmegaConf.load(cfg_path)
+    os.system('mkdir -p temp')
+    
+    env_runner : BaseImageRunner = hydra.utils.instantiate(
+        cfg.task.env_runner,
+        output_dir='temp')
+    
+    policy: DiffusionUnetHybridImagePolicy = hydra.utils.instantiate(cfg.policy)
+    
+    # configure dataset
+    dataset : BaseImageDataset = hydra.utils.instantiate(cfg.task.dataset)
+    normalizer = dataset.get_normalizer()
+
+    policy.set_normalizer(normalizer)
+    
+    env_runner.run(policy)
+
+if __name__ == '__main__':
+    test()
+    

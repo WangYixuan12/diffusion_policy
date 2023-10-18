@@ -28,16 +28,16 @@ logging:
   group: null
   id: null
   mode: online
-  name: 2022.12.28-22.49.46_train_diffusion_unet_hybrid_can_image
+  name: 2023.10.17_train_diffusion_unet_hybrid_sapien_can_image
   project: diffusion_policy_debug
   resume: true
   tags:
   - train_diffusion_unet_hybrid
-  - can_image
+  - sapien_can_image
   - default
 multi_run:
-  run_dir: data/outputs/2022.12.28/22.49.46_train_diffusion_unet_hybrid_can_image
-  wandb_name_base: 2022.12.28-22.49.46_train_diffusion_unet_hybrid_can_image
+  run_dir: data/outputs/2023.10.17/train_diffusion_unet_hybrid_sapien_can_image
+  wandb_name_base: 2023.10.17-train_diffusion_unet_hybrid_sapien_can_image
 n_action_steps: 8
 n_latency_steps: 0
 n_obs_steps: 2
@@ -55,9 +55,10 @@ past_action_visible: false
 policy:
   _target_: diffusion_policy.policy.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
   cond_predict_scale: true
+  # NOTE: crop_shape needs to smaller than obs
   crop_shape:
-  - 76
-  - 76
+  - 58
+  - 78
   diffusion_step_embed_dim: 128
   down_dims:
   - 512
@@ -86,58 +87,58 @@ policy:
       shape:
       - 10
     obs:
-      agentview_image:
+      front_view_color:
         shape:
         - 3
-        - 84
-        - 84
+        - 60
+        - 80
         type: rgb
-      robot0_eef_pos:
+      # robot0_eef_pos:
+      #   shape:
+      #   - 3
+      # robot0_eef_quat:
+      #   shape:
+      #   - 4
+      right_view_color:
         shape:
         - 3
-      robot0_eef_quat:
-        shape:
-        - 4
-      robot0_eye_in_hand_image:
-        shape:
-        - 3
-        - 84
-        - 84
+        - 60
+        - 80
         type: rgb
-      robot0_gripper_qpos:
-        shape:
-        - 2
+      # robot0_gripper_qpos:
+      #   shape:
+      #   - 2
 shape_meta:
   action:
     shape:
     - 10
   obs:
-    agentview_image:
+    front_view_color:
       shape:
       - 3
-      - 84
-      - 84
+      - 60
+      - 80
       type: rgb
-    robot0_eef_pos:
+    # robot0_eef_pos:
+    #   shape:
+    #   - 3
+    # robot0_eef_quat:
+    #   shape:
+    #   - 4
+    right_view_color:
       shape:
       - 3
-    robot0_eef_quat:
-      shape:
-      - 4
-    robot0_eye_in_hand_image:
-      shape:
-      - 3
-      - 84
-      - 84
+      - 60
+      - 80
       type: rgb
-    robot0_gripper_qpos:
-      shape:
-      - 2
+    # robot0_gripper_qpos:
+    #   shape:
+    #   - 2
 task:
   abs_action: true
   dataset:
     _target_: diffusion_policy.dataset.sapien_dataset.SapienDataset
-    dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-16-16-59-46-948044
+    dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-17-02-09-09-909762
     horizon: 16
     pad_after: 7
     pad_before: 1
@@ -171,82 +172,65 @@ task:
         #   - 2
     use_cache: true
     val_ratio: 0.1
-  dataset_path: /media/yixuan_2T/diffusion_policy/data/robomimic/datasets/can/mh/image_abs.hdf5
-  dataset_type: mh
+  dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-17-02-09-09-909762
   env_runner:
     _target_: diffusion_policy.env_runner.sapien_image_runner.SapienImageRunner
     abs_action: true
     crf: 22
-    dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-16-16-59-46-948044
+    dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-17-02-09-09-909762
     fps: 10
-    max_steps: 500
+    max_steps: 600
     n_action_steps: 8
     n_envs: null
     n_obs_steps: 2
-    n_test: 4
-    n_test_vis: 4
-    n_train: 6
-    n_train_vis: 2
+    n_test: 1
+    n_test_vis: 1
+    n_train: 1
+    n_train_vis: 1
     past_action: false
-    render_obs_key: agentview_image
+    render_obs_keys:
+    - front_view
+    - right_view
     shape_meta:
       action:
         shape:
         - 10
       obs:
-        agentview_image:
+        front_view_color:
           shape:
           - 3
-          - 84
-          - 84
+          - 60
+          - 80
           type: rgb
-        robot0_eef_pos:
+        right_view_color:
           shape:
           - 3
-        robot0_eef_quat:
-          shape:
-          - 4
-        robot0_eye_in_hand_image:
-          shape:
-          - 3
-          - 84
-          - 84
+          - 60
+          - 80
           type: rgb
-        robot0_gripper_qpos:
-          shape:
-          - 2
     test_start_seed: 100000
     tqdm_interval_sec: 1.0
     train_start_idx: 0
-  name: can_image
+  name: sapien_can_image
   shape_meta:
     action:
       shape:
       - 10
     obs:
-      agentview_image:
+      front_view_color:
         shape:
         - 3
-        - 84
-        - 84
+        - 60
+        - 80
         type: rgb
-      robot0_eef_pos:
+      right_view_color:
         shape:
         - 3
-      robot0_eef_quat:
-        shape:
-        - 4
-      robot0_eye_in_hand_image:
-        shape:
-        - 3
-        - 84
-        - 84
+        - 60
+        - 80
         type: rgb
-      robot0_gripper_qpos:
-        shape:
-        - 2
   task_name: can
-task_name: can_image
+task_name: sapien_can_image
 training:
   checkpoint_every: 10
   debug: false

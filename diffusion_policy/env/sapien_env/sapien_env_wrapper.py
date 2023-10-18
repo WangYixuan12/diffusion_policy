@@ -36,6 +36,17 @@ def transform_action_from_world_to_robot(action : np.ndarray, pose : sapien.Pose
     action_robot[6] = action[6]
     return action_robot
 
+# necessary methods and attributes:
+# methods:
+# - get_observation
+# - seed
+# - render
+# - step
+# - reset
+# - close
+# attributes:
+# - action_space
+# - observation_space
 class SapienEnvWrapper():
     def __init__(self,
                  env : BaseRLEnv,
@@ -60,11 +71,14 @@ class SapienEnvWrapper():
         self.action_space = action_space
         
         observation_space = spaces.Dict()
+        self.img_h = -1
+        self.img_w = -1
         for key, value in shape_meta['obs'].items():
             shape = value['shape']
             min_value, max_value = -1, 1
             if key.endswith('color'):
                 min_value, max_value = 0, 1
+                self.img_h, self.img_w = shape[1:]
             elif key.endswith('quat'):
                 min_value, max_value = -1, 1
             elif key.endswith('qpos'):
@@ -87,15 +101,53 @@ class SapienEnvWrapper():
         # setup sapien rendering
         self.gui = GUIBase(env.scene, env.renderer, headless=True)
         for name, params in YX_TABLE_TOP_CAMERAS.items():
-            self.gui.create_camera(**params)
+            split_name = name.split('_')
+            split_name.append('view')
+            rejoin_name = '_'.join(split_name)
+            if rejoin_name in self.render_obs_keys:
+                self.gui.create_camera(**params)
         
         # setup sapien control
         self.teleop = TeleopRobot(env.robot_name)
     
+    def get_observation(self, raw_obs=None):
+        if raw_obs is None:
+            raw_obs = {}
+            arm_dof = self.env.arm_dof
+            raw_obs['joint_pos'] = self.env.robot.get_qpos()[:-1]
+            raw_obs['joint_vel'] = self.env.robot.get_qvel()[:-1]
+            ee_translation = self.env.palm_link.get_pose().p
+            ee_rotation = transforms3d.euler.quat2euler(self.env.palm_link.get_pose().q,axes='sxyz')
+            ee_gripper = self.env.robot.get_qpos()[arm_dof]
+            ee_pos = np.concatenate([ee_translation,ee_rotation,[ee_gripper]])
+            ee_vel = np.concatenate([self.env.palm_link.get_velocity(),self.env.palm_link.get_angular_velocity(),self.env.robot.get_qvel()[arm_dof:arm_dof+1]])
+            raw_obs['ee_pos'] = ee_pos
+            raw_obs['ee_vel'] = ee_vel
+            rgbs, depths = self.gui.render(depth=True)
+            for cam_idx, cam in enumerate(self.gui.cams):
+                curr_rgb = rgbs[cam_idx]
+                curr_depth = depths[cam_idx]
+                curr_rgb = cv2.resize(curr_rgb, (self.img_w, self.img_h), interpolation=cv2.INTER_AREA)
+                curr_depth = cv2.resize(curr_depth, (self.img_w, self.img_h), interpolation=cv2.INTER_NEAREST)
+                raw_obs[f'{cam.name}_color'] = curr_rgb.transpose(2,0,1) / 255.0
+                raw_obs[f'{cam.name}_depth'] = curr_depth / 1000.0
+                raw_obs[f'{cam.name}_intrinsic'] = cam.get_intrinsic_matrix()
+                raw_obs[f'{cam.name}_extrinsic'] = cam.get_extrinsic_matrix()
+        
+        self.render_cache = [(raw_obs[f'{render_obs_key}_color'].transpose(1,2,0) * 255).astype(np.uint8) for render_obs_key in self.render_obs_keys]
+
+        obs = dict()
+        for key in self.observation_space.keys():
+            obs[key] = raw_obs[key]
+        return obs
+    
     def seed(self, seed=None):
         self.env.seed(seed)
     
-    def render(self):
+    def render(self, mode=None):
+        if self.render_cache is not None:
+            rgbs_sel = np.concatenate(self.render_cache, axis=1).astype(np.uint8) # concat horizontally
+            return rgbs_sel
         rgbs = self.gui.render()
         rgbs_sel = []
         for cam_idx, cam in enumerate(self.gui.cams):
@@ -105,35 +157,41 @@ class SapienEnvWrapper():
         return rgbs_sel
     
     def step(self, action):
-        # :param: action: np.ndarray. [0:3] for translation, [3:9] for 6d rotation, [10] for gripper
+        # :param: action: np.ndarray. [0:3] for translation, [3:6] for euler angles, [7] for gripper
         # :return: obs, reward, done, info
-        action_euler = self.rotation_transformer.forward(action[3:9])
-        action_in_world = np.concatenate([action[:3], action_euler, action[9:]])
-        action_in_robot = transform_action_from_world_to_robot(action_in_world, self.env.robot.get_pose())
+        # action_euler = self.rotation_transformer.forward(action[3:9])
+        # action_in_world = np.concatenate([action[:3], action_euler, action[9:]])
+        action_in_robot = transform_action_from_world_to_robot(action, self.env.robot.get_pose())
         
         arm_dof = self.env.arm_dof
         joint_action = np.zeros(arm_dof+1)
         joint_action[:arm_dof] = self.teleop.ik_panda(self.env.robot.get_qpos()[:],action_in_robot)
         joint_action[arm_dof:] = action_in_robot[-1]
-        return self.env.step(joint_action)
+    
+        _, reward, done, info = self.env.step(joint_action)
+        obs = self.get_observation()
+        return obs, reward, done, info
     
     def reset(self):
         self.env.reset()
         if self.init_state is not None:
-            init_pose = sapien.Pose.from_transformation_matrix(self.init_state)
-            self.env.manipulated_object.set_pose(init_pose)
+            self.env.set_init(self.init_state)
+        return self.get_observation()
+    
+    def close(self):
+        self.env.close()
 
 def test():
     dataset_dir = '/media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-17-02-09-09-909762'
     env_cfg = OmegaConf.load(f'{dataset_dir}/config.yaml')
-    env = hydra.utils.instantiate(env_cfg)
+    env : BaseRLEnv = hydra.utils.instantiate(env_cfg)
     add_default_scene_light(env.scene, env.renderer)
     shape_meta = {
         'action': {
             'shape': (10,)
         },
         'obs': {
-            'front_right_view_color': {
+            'right_bottom_view_color': {
                 'shape': (3, 60, 80),
                 'type': 'rgb',
             },

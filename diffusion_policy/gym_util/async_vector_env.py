@@ -100,7 +100,6 @@ class AsyncVectorEnv(VectorEnv):
         if dummy_env_fn is None:
             dummy_env_fn = env_fns[0]
         dummy_env = dummy_env_fn()
-        self.metadata = dummy_env.metadata
 
         if (observation_space is None) or (action_space is None):
             observation_space = observation_space or dummy_env.observation_space
