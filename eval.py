@@ -45,6 +45,11 @@ def main(checkpoint, output_dir, device):
     policy.eval()
     
     # run eval
+    # cfg.task.env_runner.max_steps = 1000
+    # cfg.task.env_runner.n_test = 0
+    # cfg.task.env_runner.n_train = 10
+    # cfg.task.env_runner.n_test_vis = 0
+    # cfg.task.env_runner.n_train_vis = 10
     env_runner = hydra.utils.instantiate(
         cfg.task.env_runner,
         output_dir=output_dir)

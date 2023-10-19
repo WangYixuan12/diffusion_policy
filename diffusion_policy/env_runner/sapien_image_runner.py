@@ -77,7 +77,7 @@ class SapienImageRunner(BaseImageRunner):
                     video_recoder=VideoRecorder.create_h264(
                         fps=fps,
                         codec='h264',
-                        input_pix_fmt='rgb24',
+                        input_pix_fmt='bgr24',
                         crf=crf,
                         thread_type='FRAME',
                         thread_count=1

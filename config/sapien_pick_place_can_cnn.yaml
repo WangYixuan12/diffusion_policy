@@ -138,7 +138,7 @@ task:
   abs_action: true
   dataset:
     _target_: diffusion_policy.dataset.sapien_dataset.SapienDataset
-    dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-17-02-09-09-909762
+    dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-18-15-06-10-582709
     horizon: 16
     pad_after: 7
     pad_before: 1
@@ -172,12 +172,12 @@ task:
         #   - 2
     use_cache: true
     val_ratio: 0.1
-  dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-17-02-09-09-909762
+  dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-18-15-06-10-582709
   env_runner:
     _target_: diffusion_policy.env_runner.sapien_image_runner.SapienImageRunner
     abs_action: true
     crf: 22
-    dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-17-02-09-09-909762
+    dataset_dir: /media/yixuan_2T/diffusion_policy/data/sapien_env/teleop_data/pick_place_soda/2023-10-18-15-06-10-582709
     fps: 10
     max_steps: 600
     n_action_steps: 8
