@@ -42,8 +42,8 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
 
         # parse shape_meta
         action_shape = shape_meta['action']['shape']
-        assert len(action_shape) == 1
-        action_dim = action_shape[0]
+        # assert len(action_shape) == 1
+        action_dim = action_shape[-1]
         obs_shape_meta = shape_meta['obs']
         obs_config = {
             'low_dim': [],
@@ -212,7 +212,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         return trajectory
 
 
-    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def predict_action(self, obs_dict: Dict[str, torch.Tensor], T: int) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key
         result: must include "action" key
@@ -222,7 +222,6 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         nobs = self.normalizer.normalize(obs_dict)
         value = next(iter(nobs.values()))
         B, To = value.shape[:2]
-        T = self.horizon
         Da = self.action_dim
         Do = self.obs_feature_dim
         To = self.n_obs_steps
